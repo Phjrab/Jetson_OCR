@@ -41,21 +41,18 @@ Optimized wheel for Jetson Orin Nano (Compute Capability 8.7, CUDA 12.6, Python 
 ```bash
 cd /home/jetson_orin_nano/project/Jetson_OCR
 source .venv/bin/activate
-wget https://github.com/YOUR_USERNAME/Jetson_OCR/releases/download/v3.3.0-jetson-orin-nano-8.7/paddlepaddle_gpu-3.3.0.dev20251226-cp310-cp310-linux_aarch64.whl
+wget https://github.com/Phjrab/Jetson_OCR/releases/download/v3.3.0-jetson-orin-nano-8.7/paddlepaddle_gpu-3.3.0.dev20251226-cp310-cp310-linux_aarch64.whl
 pip install ./paddlepaddle_gpu-3.3.0.dev20251226-cp310-cp310-linux_aarch64.whl
 ```
 
-Or directly from the project directory:
+Alternatively, if the wheel is already in the project directory:
 
 ```bash
+source .venv/bin/activate
 pip install ./paddlepaddle_gpu-3.3.0.dev20251226-cp310-cp310-linux_aarch64.whl
 ```
 
-**Option B: Build from Source**
-
-See [BUILD.md](BUILD.md) for instructions on compiling PaddlePaddle 3.3.0 from source on your Jetson.
-
-**Option C: Manual Download**
+**Option B: Manual Download**
 
 Official install references:
 
