@@ -1,3 +1,30 @@
+# === PaddleOCR Core Dependencies ===
+
+# [CRITICAL] Direct wheel build required - never use pip automatic install
+# Only install from GitHub Releases or manually built wheels
+# paddlepaddle-gpu versions 3.0.0b1 ~ 3.3.0.dev supported
+# See README for Jetson Orin Nano (Compute 8.7) pre-built wheel
+# paddlepaddle-gpu>=3.0.0b1,<3.4.0
+
+# Core OCR library
 paddleocr>=2.8.1
-numpy>=1.26.0
+
+# === Critical Version Constraints ===
+
+# [IMPORTANT] NumPy 2.x breaks binary compatibility - DO NOT upgrade
+# Pinned to 1.x range: >=1.23.0, <2.0.0
+numpy>=1.23.0,<2.0.0
+
+# [IMPORTANT] setuptools 59.x+ causes distutils build errors on ARM
+# Already pinned in setup_jetson_ocr.sh to 58.2.0
+# setuptools==58.2.0
+
+# === Supporting Dependencies ===
+
+# Image processing
 Pillow>=10.0.0
+opencv-python>=4.6.0
+
+# OCR geometry operations
+shapely>=2.0.0
+pyclipper>=1.3.0

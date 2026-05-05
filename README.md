@@ -101,8 +101,23 @@ python main.py
 
 For best results on books and printed text, keep the default high-accuracy configuration and, if needed, point PaddleOCR to a PP-OCRv4 or server-grade model directory using the command-line options in `main.py`.
 
+## Dependency Requirements
+
+| Package | Version | Notes |
+|---------|---------|-------|
+| **paddlepaddle-gpu** | 3.0.0b1 ~ 3.3.0.dev | **[CRITICAL]** Direct wheel build required. Never use `pip install paddlepaddle-gpu`. Install from [GitHub Releases](https://github.com/Phjrab/Jetson_OCR/releases/tag/v3.3.0-jetson-orin-nano-8.7) only. |
+| paddleocr | >=2.8.1 | OCR core library |
+| **numpy** | >=1.23.0, <2.0.0 | **[CRITICAL]** NumPy 2.x breaks binary compatibility. Pinned to 1.x range. |
+| **setuptools** | ==58.2.0 | **[IMPORTANT]** Latest versions cause distutils build errors on ARM. Pinned in setup script. |
+| opencv-python | >=4.6.0 | Use standard version, not headless variant for Jetson. |
+| Pillow | >=10.0.0 | Image processing and text overlay rendering. |
+| shapely | >=2.0.0 | OCR bounding box operations. |
+| pyclipper | >=1.3.0 | Text box expansion/contraction operations. |
+
 ## Troubleshooting
 
-- If Korean text appears as boxes or garbled output, install `fonts-noto-cjk` or `fonts-nanum`.
-- If `paddle` cannot be imported, the Jetson ARM64/L4T GPU wheel has not been installed yet.
-- If the camera does not open, confirm that `/dev/video0` exists and another application is not using it.
+- **"ModuleNotFoundError: No module named 'paddle'"** → Wheel not installed. Download from [Releases](https://github.com/Phjrab/Jetson_OCR/releases) and run: `pip install ./paddlepaddle_gpu-3.3.0.dev20251226-cp310-cp310-linux_aarch64.whl`
+- **"ImportError: numpy.*.so"** → NumPy 2.x detected. Run: `pip install 'numpy<2.0.0'` and reinstall paddle wheel.
+- **"distutils not found"** → setuptools version mismatch. The setup script pins it to 58.2.0; if not applied, run: `pip install setuptools==58.2.0`
+- **Korean text appears as boxes or garbled** → Install a Korean-capable font: `sudo apt-get install fonts-noto-cjk fonts-nanum`
+- **Camera does not open** → Confirm `/dev/video0` exists and no other app is using it: `ls -l /dev/video0`
