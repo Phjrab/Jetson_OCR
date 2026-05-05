@@ -73,6 +73,83 @@ export PADDLE_WHEEL=/path/to/paddlepaddle_gpu-3.3.0.dev20251226-cp310-cp310-linu
 ./setup_jetson_ocr.sh
 ```
 
+**Option C: Build from Source (Advanced)**
+
+For custom optimizations or if pre-built wheels are unavailable, compile PaddlePaddle 3.3.0 directly on Jetson Orin Nano.
+
+**Prerequisites:**
+- 8+ GB free disk space
+- Swap memory already configured
+- CUDA 12.6 and cuDNN 9.3.0 installed
+
+**Step 1: Prepare Build Environment**
+
+```bash
+# 1. Deactivate conda to avoid conflicts
+conda deactivate
+
+# 2. Install system dependencies for packaging
+sudo apt-get update
+sudo apt-get install -y patchelf libGL
+
+# 3. Set up Python virtual environment with pinned versions
+source ~/project/Jetson_OCR/.venv/bin/activate
+pip install --upgrade pip
+pip install "setuptools==58.2.0" "numpy<2.0.0" wheel
+```
+
+**Step 2: Configure CMake (Orin Nano Optimized)**
+
+```bash
+cd ~/Paddle
+mkdir -p build && cd build
+
+cmake .. \
+    -GNinja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DWITH_GPU=ON \
+    -DWITH_TESTING=OFF \
+    -DCUDA_ARCH_NAME=Manual \
+    -DCUDA_ARCH_BIN="8.7" \
+    -DWITH_ARM=ON \
+    -DWITH_AVX=OFF \
+    -DWITH_MKL=OFF \
+    -DWITH_MKLDNN=OFF \
+    -DWITH_TENSORRT=OFF \
+    -DWITH_NCCL=OFF \
+    -DWITH_DISTRIBUTE=OFF \
+    -DWITH_NVJPEG=OFF \
+    -DCMAKE_CUDA_FLAGS="-U__ARM_NEON -DEIGEN_DONT_VECTORIZE=1" \
+    -DPYTHON_EXECUTABLE=$(which python3) \
+    2>&1 | tee cmake_output.log
+```
+
+**Step 3: Compile (Adaptive Core Strategy)**
+
+To avoid "Killed" errors from memory exhaustion, use a two-phase compilation strategy:
+
+```bash
+# Phase 1: Start with 6 cores for speed
+ninja -j6 2>&1 | tee build_output.log
+
+# Phase 2: If "Killed" error occurs around build step ~700,
+# restart with reduced cores to escape heavy Fused Kernel compilation
+ninja -j2 2>&1 | tee -a build_output.log
+```
+
+**Step 4: Verify and Install**
+
+```bash
+# 1. Confirm wheel generation
+ls -lh ~/Paddle/build/python/dist/
+
+# 2. Install the generated wheel
+pip install ~/Paddle/build/python/dist/paddlepaddle_gpu-*.whl --force-reinstall
+
+# 3. Validate GPU recognition
+python3 -c "import paddle; paddle.utils.run_check()"
+```
+
 ## Performance Tuning
 
 Enable maximum Jetson performance before launching OCR:
