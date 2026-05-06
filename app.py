@@ -21,11 +21,11 @@ paddle.set_device('gpu')
 
 # 3. 전역 변수: 실시간 OCR 결과 저장
 ocr_results_lock = threading.Lock()
-ocr_results = {"texts": [], "timestamp": 0, "frame_count": 0}
+ocr_results = {"texts": [], "timestamp": 0, "frame_count": 0, "detected_count": 0, "average_score": 0.0}
 
 # 3. OCR 엔진 초기화
 print("⏳ PaddleOCR 초기화 중...")
-ocr = PaddleOCR(lang='korean', ocr_version='PP-OCRv3', use_textline_orientation=False)
+ocr = PaddleOCR(lang='korean', ocr_version='PP-OCRv3', use_angle_cls=False)
 print("✅ PaddleOCR 로드 완료!")
 
 # 4. 한글 폰트 설정 (젯슨 우분투 기본 나눔폰트 경로)
@@ -40,29 +40,64 @@ except IOError:
 def extract_ocr_text(results):
     """OCR 결과에서 텍스트만 추출합니다."""
     text_list = []
-    if not results or not results[0]:
+    if not results:
         return text_list
-    
-    for line in results[0]:
+
+    prediction = results[0] if isinstance(results, list) and results else results
+
+    if isinstance(prediction, dict) and "rec_texts" in prediction:
+        rec_texts = prediction.get("rec_texts", [])
+        rec_scores = prediction.get("rec_scores", [])
+        for text, score in zip(rec_texts, rec_scores):
+            if score > 0.4:
+                text_list.append({"text": text, "score": f"{score:.2f}"})
+        text_list.sort(key=lambda item: float(item["score"]), reverse=True)
+        return text_list[:10]
+
+    for line in prediction or []:
         if isinstance(line, list) and len(line) == 2:
             content = line[1]
             if isinstance(content, (tuple, list)) and len(content) == 2:
                 text = content[0]
                 score = content[1]
-                if score > 0.6:
+                if score > 0.4:  # 커트라인을 40%로 대폭 낮춥니다.
                     text_list.append({"text": text, "score": f"{score:.2f}"})
-    return text_list
+    text_list.sort(key=lambda item: float(item["score"]), reverse=True)
+    return text_list[:10]
+
+def summarize_ocr_text(text_list):
+    """OCR 텍스트 목록의 요약 정보를 계산합니다."""
+    if not text_list:
+        return 0, 0.0
+
+    scores = [float(item["score"]) for item in text_list]
+    return len(text_list), round(sum(scores) / len(scores), 2)
 
 def draw_ocr_results(frame, results):
     """프레임에 바운딩 박스와 텍스트를 그려 반환합니다."""
-    if not results or not results[0]:
+    if not results:
         return frame
+
+    prediction = results[0] if isinstance(results, list) and results else results
 
     # 한글 출력을 위해 PIL 이미지로 변환
     img_pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(img_pil)
 
-    for line in results[0]:
+    if isinstance(prediction, dict) and "rec_texts" in prediction:
+        rec_texts = prediction.get("rec_texts", [])
+        rec_scores = prediction.get("rec_scores", [])
+        rec_polys = prediction.get("rec_polys", [])
+
+        for text, score, box in zip(rec_texts, rec_scores, rec_polys):
+            if score > 0.4 and box is not None:
+                scaled_box = [(int(p[0]), int(p[1])) for p in box]
+                draw.polygon(scaled_box, outline=(0, 255, 0), width=2)
+                text_position = (scaled_box[0][0], max(0, scaled_box[0][1] - 25))
+                draw.text(text_position, f"{text} ({score:.2f})", font=font, fill=(0, 255, 0))
+        return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
+
+    for line in prediction or []:
         if isinstance(line, list) and len(line) == 2:
             box = line[0]
             content = line[1]
@@ -71,9 +106,9 @@ def draw_ocr_results(frame, results):
                 text = content[0]
                 score = content[1]
 
-                if score > 0.6:
-                    # OCR은 절반 크기(320x240)에서 수행했으므로, 좌표를 2배로 늘림(640x480)
-                    scaled_box = [(int(p[0] * 2), int(p[1] * 2)) for p in box]
+                if score > 0.4:
+                    # 프레임을 줄이지 않으므로 좌표를 그대로 사용합니다.
+                    scaled_box = [(int(p[0]), int(p[1])) for p in box]
                     
                     # 바운딩 박스 그리기
                     draw.polygon(scaled_box, outline=(0, 255, 0), width=2)
@@ -102,15 +137,21 @@ def generate_frames():
         
         frame_count += 1
         
-        # 속도 향상을 위해 OCR 추론은 절반 크기에서 진행
-        small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-        result = ocr.predict(small_frame)
+        # 원본(640x480) 프레임을 그대로 OCR에 넣습니다.
+        result = ocr.ocr(frame)
+
+        # AI가 실제로 보고 있는 OCR 원시 데이터를 주기적으로 출력합니다.
+        if frame_count % 10 == 0:
+            print(f"🔍 [프레임 {frame_count}] OCR 데이터: {result}")
         
         # OCR 결과를 텍스트만 추출하여 전역 변수에 저장
         text_list = extract_ocr_text(result)
+        detected_count, average_score = summarize_ocr_text(text_list)
         with ocr_results_lock:
             ocr_results["texts"] = text_list
             ocr_results["frame_count"] = frame_count
+            ocr_results["detected_count"] = detected_count
+            ocr_results["average_score"] = average_score
         
         # 원본 프레임에 결과 그리기
         annotated_frame = draw_ocr_results(frame, result)
@@ -240,6 +281,29 @@ def index():
                 color: #00dd00;
                 margin-top: 10px;
             }
+            .summary {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
+                margin-bottom: 15px;
+            }
+            .summary-card {
+                background: #333;
+                border-radius: 8px;
+                padding: 12px;
+                border: 1px solid rgba(0, 255, 0, 0.18);
+            }
+            .summary-label {
+                color: #aaa;
+                font-size: 0.8em;
+                margin-bottom: 6px;
+                letter-spacing: 0.02em;
+            }
+            .summary-value {
+                color: #00ff00;
+                font-size: 1.2em;
+                font-weight: 700;
+            }
         </style>
     </head>
     <body>
@@ -257,10 +321,21 @@ def index():
 
             <div class="results-panel">
                 <h3>📄 Recognized Text</h3>
+                <div class="summary">
+                    <div class="summary-card">
+                        <div class="summary-label">표시 중인 텍스트 수</div>
+                        <div class="summary-value" id="detected-count">0</div>
+                    </div>
+                    <div class="summary-card">
+                        <div class="summary-label">평균 신뢰도</div>
+                        <div class="summary-value" id="average-score">0.00</div>
+                    </div>
+                </div>
                 <ul id="results-list">
                     <li class="result-item" style="color: #888;">대기 중...</li>
                 </ul>
                 <div class="status">Frame: <span id="frame-count">0</span></div>
+                <div class="status">Top 10 by confidence</div>
             </div>
         </div>
 
@@ -272,8 +347,12 @@ def index():
                     .then(data => {
                         const resultsList = document.getElementById('results-list');
                         const frameCount = document.getElementById('frame-count');
+                        const detectedCount = document.getElementById('detected-count');
+                        const averageScore = document.getElementById('average-score');
                         
                         frameCount.textContent = data.frame_count;
+                        detectedCount.textContent = data.detected_count ?? 0;
+                        averageScore.textContent = Number(data.average_score ?? 0).toFixed(2);
                         
                         if (data.texts && data.texts.length > 0) {
                             resultsList.innerHTML = '';
