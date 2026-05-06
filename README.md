@@ -161,10 +161,31 @@ sudo jetson_clocks
 
 ## Run
 
+**Standalone Mode (Local Display - OpenCV):**
+
 ```bash
 source .venv/bin/activate
 python main.py
 ```
+
+**Web Streaming Mode (SSH-Friendly - Flask):**
+
+For SSH environments without X11 forwarding, use the Flask web server for real-time visualization in a browser:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt  # Ensure Flask is installed
+python app.py
+```
+
+Then open a browser on your client machine and navigate to:
+- **Local:** `http://127.0.0.1:5000`
+- **Remote:** `http://<jetson-ip>:5000` (replace `<jetson-ip>` with your Jetson's IP address)
+
+**Performance Notes:**
+- Flask app downsamples frames to 320×240 for OCR inference (2× faster), then upscales results for 640×480 display.
+- Supports multiple simultaneous browser connections with threaded Flask server.
+- Korean text rendering uses PIL + Nanum Gothic font; install with: `sudo apt-get install fonts-nanum`
 
 ## Runtime Notes
 

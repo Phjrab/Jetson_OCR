@@ -9,6 +9,9 @@
 # Core OCR library
 paddleocr>=2.8.1
 
+# Web streaming server for real-time visualization
+flask>=2.0.0
+
 # === Critical Version Constraints ===
 
 # [IMPORTANT] NumPy 2.x breaks binary compatibility - DO NOT upgrade
