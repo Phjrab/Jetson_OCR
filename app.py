@@ -19,7 +19,7 @@ paddle.set_device('gpu')
 
 # 3. OCR 엔진 초기화
 print("⏳ PaddleOCR 초기화 중...")
-ocr = PaddleOCR(lang='korean', ocr_version='PP-OCRv3', use_angle_cls=False, show_log=False)
+ocr = PaddleOCR(lang='korean', ocr_version='PP-OCRv3', use_textline_orientation=False)
 print("✅ PaddleOCR 로드 완료!")
 
 # 4. 한글 폰트 설정 (젯슨 우분투 기본 나눔폰트 경로)
@@ -76,7 +76,7 @@ def generate_frames():
         
         # 속도 향상을 위해 OCR 추론은 절반 크기에서 진행
         small_frame = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
-        result = ocr.ocr(small_frame)
+        result = ocr.predict(small_frame)
         
         # 원본 프레임에 결과 그리기
         annotated_frame = draw_ocr_results(frame, result)

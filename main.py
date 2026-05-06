@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import logging  # 추가됨: 로깅 제어용
 import os
 import time
 from dataclasses import dataclass
@@ -9,8 +10,8 @@ from typing import Iterable, List, Sequence, Tuple
 
 import cv2
 import numpy as np
+import paddle  # 추가됨: GPU 수동 할당용
 from PIL import Image, ImageDraw, ImageFont
-
 
 KOREAN_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
@@ -21,7 +22,6 @@ KOREAN_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
 )
 
-
 @dataclass(frozen=True)
 class OCRRuntimeConfig:
     camera_index: int = 0
@@ -30,7 +30,7 @@ class OCRRuntimeConfig:
     fps: int = 30
     lang: str = "korean"
     use_gpu: bool = True
-    use_angle_cls: bool = True
+    use_textline_orientation: bool = True
     enable_mkldnn: bool = False
     ir_optim: bool = True
     use_tensorrt: bool = False
@@ -39,7 +39,6 @@ class OCRRuntimeConfig:
     cls_model_dir: str | None = None
     font_path: str | None = None
     font_size: int = 24
-
 
 def parse_args() -> OCRRuntimeConfig:
     parser = argparse.ArgumentParser(description="Real-time PaddleOCR for Jetson Orin Nano")
@@ -70,7 +69,6 @@ def parse_args() -> OCRRuntimeConfig:
         font_size=args.font_size,
     )
 
-
 def resolve_font(font_path: str | None) -> str:
     if font_path and Path(font_path).is_file():
         return font_path
@@ -83,22 +81,31 @@ def resolve_font(font_path: str | None) -> str:
         "No Korean-capable font found. Install fonts-noto-cjk or fonts-nanum, or set OCR_FONT_PATH to a valid font file."
     )
 
-
 def create_ocr_engine(config: OCRRuntimeConfig) -> object:
+    # --- [수정된 부분 시작] ---
+    # 1. PaddleOCR 내부에 인자로 넣으면 에러가 나므로, 로깅 레벨을 파이썬 시스템 레벨에서 끕니다.
+    logging.getLogger("ppocr").setLevel(logging.ERROR)
+
+    # 2. 장치(GPU/CPU) 설정을 Paddle 엔진 레벨에서 강제로 할당합니다.
+    if config.use_gpu:
+        paddle.set_device('gpu')
+    else:
+        paddle.set_device('cpu')
+    # --- [수정된 부분 끝] ---
+
     try:
         from paddleocr import PaddleOCR
-    except ImportError as exc:  # pragma: no cover - runtime guard
+    except ImportError as exc:
         raise SystemExit(
             "PaddleOCR is not installed. Run setup_jetson_ocr.sh and install the Jetson paddlepaddle-gpu wheel first."
         ) from exc
 
+    # 3. ocr_kwargs에서 에러를 유발하던 'use_gpu'와 'show_log'를 제거했습니다.
     ocr_kwargs = {
         "lang": config.lang,
-        "use_gpu": config.use_gpu,
-        "use_angle_cls": config.use_angle_cls,
+        "use_textline_orientation": config.use_textline_orientation,
         "enable_mkldnn": config.enable_mkldnn,
         "ir_optim": config.ir_optim,
-        "show_log": False,
         "ocr_version": "PP-OCRv4",
     }
 
@@ -114,15 +121,14 @@ def create_ocr_engine(config: OCRRuntimeConfig) -> object:
 
     return PaddleOCR(**ocr_kwargs)
 
-
 def open_camera(config: OCRRuntimeConfig) -> cv2.VideoCapture:
+    # 젯슨 환경에서는 V4L2 백엔드를 명시하는 것이 안정적입니다.
     capture = cv2.VideoCapture(config.camera_index, cv2.CAP_V4L2)
     capture.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)
     capture.set(cv2.CAP_PROP_FRAME_HEIGHT, config.height)
     capture.set(cv2.CAP_PROP_FPS, config.fps)
     capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return capture
-
 
 def enhance_frame(frame: np.ndarray) -> np.ndarray:
     lab = cv2.cvtColor(frame, cv2.COLOR_BGR2LAB)
@@ -142,7 +148,6 @@ def enhance_frame(frame: np.ndarray) -> np.ndarray:
     )
     return cv2.filter2D(enhanced, -1, sharpen_kernel)
 
-
 def normalize_ocr_result(raw_result: Sequence) -> List:
     if not raw_result:
         return []
@@ -153,7 +158,6 @@ def normalize_ocr_result(raw_result: Sequence) -> List:
             return list(first_item)
 
     return list(raw_result)
-
 
 def draw_text_label(
     frame: np.ndarray,
@@ -182,7 +186,6 @@ def draw_text_label(
 
     return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
-
 def overlay_results(
     frame: np.ndarray,
     detections: Iterable,
@@ -203,7 +206,6 @@ def overlay_results(
 
     return annotated
 
-
 def build_status_panel(frame: np.ndarray, inference_ms: float, fps: float) -> np.ndarray:
     panel = frame.copy()
     status_lines = [
@@ -219,7 +221,6 @@ def build_status_panel(frame: np.ndarray, inference_ms: float, fps: float) -> np
 
     return panel
 
-
 def run() -> None:
     config = parse_args()
     font_path = resolve_font(config.font_path)
@@ -230,8 +231,9 @@ def run() -> None:
 
     capture = open_camera(config)
     if not capture.isOpened():
-        raise RuntimeError("Could not open /dev/video0. Check the camera connection and permissions.")
+        raise RuntimeError(f"Could not open camera {config.camera_index}. Check the camera connection and permissions.")
 
+    # SSH 등 화면이 없는 환경에서는 이 부분이 에러를 낼 수 있으므로 주의가 필요합니다.
     cv2.namedWindow("Jetson OCR", cv2.WINDOW_NORMAL)
 
     try:
@@ -245,10 +247,15 @@ def run() -> None:
             enhanced = enhance_frame(frame)
 
             infer_start = time.perf_counter()
-            raw_result = ocr.ocr(enhanced, cls=True)
+            raw_result = ocr.predict(enhanced, cls=True)
             inference_ms = (time.perf_counter() - infer_start) * 1000.0
 
             detections = normalize_ocr_result(raw_result)
+            
+            # 터미널에도 결과 출력 (디버깅용)
+            for _, (text, score) in detections:
+                print(f"📝 {text} ({score:.2f})")
+
             annotated = overlay_results(enhanced, detections, font)
 
             total_latency_ms = (time.perf_counter() - loop_start) * 1000.0
@@ -263,7 +270,6 @@ def run() -> None:
     finally:
         capture.release()
         cv2.destroyAllWindows()
-
 
 if __name__ == "__main__":
     run()
