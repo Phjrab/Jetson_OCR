@@ -4,6 +4,8 @@ import argparse
 import logging  # 추가됨: 로깅 제어용
 import os
 import time
+import socket
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Sequence, Tuple
@@ -223,53 +225,65 @@ def build_status_panel(frame: np.ndarray, inference_ms: float, fps: float) -> np
 
 def run() -> None:
     config = parse_args()
-    font_path = resolve_font(config.font_path)
-    font = ImageFont.truetype(font_path, config.font_size)
-
+    
     print("Initializing PaddleOCR...")
     ocr = create_ocr_engine(config)
 
     capture = open_camera(config)
     if not capture.isOpened():
-        raise RuntimeError(f"Could not open camera {config.camera_index}. Check the camera connection and permissions.")
+        raise RuntimeError(f"Could not open camera {config.camera_index}. Check the camera connection.")
 
-    # SSH 등 화면이 없는 환경에서는 이 부분이 에러를 낼 수 있으므로 주의가 필요합니다.
-    cv2.namedWindow("Jetson OCR", cv2.WINDOW_NORMAL)
+    # 📡 UDP 소켓 통신 설정 (데이터를 전송할 목적지)
+    # 데이터를 받을 PC나 기기의 IP 주소를 입력하세요. (자기 자신이면 127.0.0.1)
+    TARGET_IP = "127.0.0.1" 
+    TARGET_PORT = 5005
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+    print(f"🚀 [데이터 전송 모드] 실시간 OCR 좌표를 {TARGET_IP}:{TARGET_PORT} 로 전송합니다.")
 
     try:
         while True:
-            loop_start = time.perf_counter()
             ok, frame = capture.read()
             if not ok:
                 print("Failed to read a frame from the camera.")
                 break
 
+            # 1. 이미지 전처리 및 OCR 추론 (기존 코드와 동일)
             enhanced = enhance_frame(frame)
-
-            infer_start = time.perf_counter()
-            raw_result = ocr.predict(enhanced, cls=True)
-            inference_ms = (time.perf_counter() - infer_start) * 1000.0
-
+            raw_result = ocr.ocr(enhanced, cls=False)
             detections = normalize_ocr_result(raw_result)
             
-            # 터미널에도 결과 출력 (디버깅용)
-            for _, (text, score) in detections:
-                print(f"📝 {text} ({score:.2f})")
+            # 2. 전송할 데이터 포장 (JSON 형태)
+            payload = []
+            for box, (text, score) in detections:
+                if score > 0.6:  # 신뢰도 60% 이상만
+                    # 로봇 팔 제어를 위해 중심점 좌표 계산
+                    center_x = sum([p[0] for p in box]) / 4
+                    center_y = sum([p[1] for p in box]) / 4
+                    
+                    payload.append({
+                        "text": text,
+                        "x": round(center_x, 1),
+                        "y": round(center_y, 1),
+                        "score": round(score, 2)
+                    })
 
-            annotated = overlay_results(enhanced, detections, font)
+            # 3. 데이터가 있을 때만 외부로 전송!
+            if payload:
+                # 데이터를 JSON 문자열로 변환 후 전송
+                message = json.dumps(payload).encode('utf-8')
+                sock.sendto(message, (TARGET_IP, TARGET_PORT))
+                print(f"📡 전송 완료: {payload}")
 
-            total_latency_ms = (time.perf_counter() - loop_start) * 1000.0
-            fps = 1000.0 / total_latency_ms if total_latency_ms > 0 else 0.0
+            # GUI 창 띄우는 부분(cv2.imshow)은 완전히 삭제했습니다.
+            # 서버 과부하를 막기 위해 아주 짧은 대기시간 부여
+            time.sleep(0.01)
 
-            output = build_status_panel(annotated, inference_ms, fps)
-
-            cv2.imshow("Jetson OCR", output)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (27, ord("q"), ord("Q")):
-                break
+    except KeyboardInterrupt:
+        print("\n👋 데이터 전송을 종료합니다.")
     finally:
         capture.release()
-        cv2.destroyAllWindows()
+        sock.close()
 
 if __name__ == "__main__":
     run()
